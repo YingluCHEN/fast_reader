@@ -1,0 +1,20 @@
+# Python
+.env
+*.pyc
+__pycache__/
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+*.xpi
+
+# Data (marks 和 notes 是本地私有数据，不提交)
+local-ai-service/data/marks.json
+local-ai-service/data/notes/
+
+# IDE
+.idea/
+.vscode/
+*.DS_Store

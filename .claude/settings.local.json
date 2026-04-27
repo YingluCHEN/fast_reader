@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /d/fast_reader/zotero-plugin/src /d/fast_reader/zotero-plugin/chrome/content/reader /d/fast_reader/zotero-plugin/chrome/skin /d/fast_reader/zotero-plugin/chrome/locale/en-US)",
+      "Bash(mkdir -p /d/fast_reader/local-ai-service/data/notes)"
+    ]
+  }
+}

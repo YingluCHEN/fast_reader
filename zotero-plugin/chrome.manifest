@@ -1,0 +1,3 @@
+content ai-bilingual-reader chrome/content/
+skin    ai-bilingual-reader classic/1.0 chrome/skin/
+locale  ai-bilingual-reader en-US chrome/locale/en-US/

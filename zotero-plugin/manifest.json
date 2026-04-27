@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "Zotero AI Bilingual Reading Assistant",
+  "version": "0.1.0",
+  "description": "AI-powered bilingual reading assistant. Select a paper with PDF, right-click → AI Bilingual Read.",
+  "author": "AI Bilingual Reader",
+  "icons": {
+    "48": "chrome/skin/icon.png"
+  },
+  "applications": {
+    "zotero": {
+      "id": "ai-bilingual-reader@zotero",
+      "strict_min_version": "7.0"
+    },
+    "gecko": {
+      "id": "ai-bilingual-reader@zotero",
+      "strict_min_version": "102.0"
+    }
+  }
+}

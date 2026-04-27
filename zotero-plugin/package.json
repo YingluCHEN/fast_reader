@@ -1,0 +1,14 @@
+{
+  "name": "zotero-ai-bilingual-reader",
+  "version": "0.1.0",
+  "description": "Zotero AI Bilingual Reading Assistant",
+  "scripts": {
+    "build": "tsc && node scripts/build.js",
+    "pack": "node scripts/pack.js",
+    "dev": "node scripts/dev.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "archiver": "^6.0.0"
+  }
+}
