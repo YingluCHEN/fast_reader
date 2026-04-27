@@ -1,6 +1,8 @@
 # Zotero AI Bilingual Reading Assistant
 
 Zotero 7+ 插件，支持 AI 双语阅读、划词 mark、Writing Note 生成。
+帮助研究者在 Zotero 中完成英文论文的双语阅读与结构化笔记沉淀。它不是简单的“全文翻译插件”，而是围绕 **Read → Translate → Mark → Understand → Save to Note → Reuse in Writing** 的研究阅读流程设计
+主要是我也没招了，论文真的要写不完了TT
 
 ## Quick Start
 
@@ -19,3 +21,5 @@ npm install && node scripts/pack.js
 ```
 
 详情见 `zotero-plugin/README.md` 和 `local-ai-service/README.md`。
+
+##
