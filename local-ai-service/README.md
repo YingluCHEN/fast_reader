@@ -39,7 +39,7 @@ The service listens on `http://127.0.0.1:8765`.
 ## Local LLM (Ollama)
 
 ```env
-LLM_BASE_URL=http://localhost:11434/v1
+LLM_BASE_URL=xxxxx
 LLM_API_KEY=ollama
 LLM_MODEL=qwen2.5:7b
 ```
