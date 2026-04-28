@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(mkdir -p /d/fast_reader/zotero-plugin/src /d/fast_reader/zotero-plugin/chrome/content/reader /d/fast_reader/zotero-plugin/chrome/skin /d/fast_reader/zotero-plugin/chrome/locale/en-US)",
-      "Bash(mkdir -p /d/fast_reader/local-ai-service/data/notes)"
+      "Bash(mkdir -p /d/fast_reader/local-ai-service/data/notes)",
+      "Bash(python -c \" import zipfile, sys with zipfile.ZipFile\\('ai-bilingual-reader.xpi', 'r'\\) as z: names = z.namelist\\(\\) for n in sorted\\(names\\): print\\(n\\) print\\(\\) print\\('--- manifest.json content ---'\\) print\\(z.read\\('manifest.json'\\).decode\\(\\)\\) \")",
+      "Bash(unzip -l ai-bilingual-reader.xpi)"
     ]
   }
 }

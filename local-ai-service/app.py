@@ -13,7 +13,7 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 import pdf_service
 import mark_store
@@ -24,10 +24,13 @@ from schemas import (
     StartReadingResponse,
     PageResponse,
     Block,
+    OverlayToken,
     SaveMarkRequest,
     Mark,
     GenerateNoteRequest,
     GenerateNoteResponse,
+    TranslateSnippetsRequest,
+    TranslateSnippetsResponse,
 )
 
 app = FastAPI(title="AI Bilingual Reader", version="0.1.0")
@@ -79,6 +82,22 @@ def get_pdf(paper_id: str):
     return FileResponse(path, media_type="application/pdf")
 
 
+@app.get("/api/read/page-image")
+def get_page_image(
+    paper_id: str = Query(...),
+    page: int = Query(..., ge=1),
+    scale: float = Query(2.0, ge=0.5, le=4.0),
+):
+    try:
+        png_bytes = pdf_service.render_page_png(paper_id, page, scale=scale)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return Response(content=png_bytes, media_type="image/png")
+
+
 # ── /api/read/page ─────────────────────────────────────────────────────────────
 @app.get("/api/read/page", response_model=PageResponse)
 def get_page(
@@ -96,21 +115,44 @@ def get_page(
         raise HTTPException(status_code=400, detail=f"Page {page} exceeds page count {page_count}.")
 
     raw_blocks = pdf_service.extract_page_blocks(paper_id, page)
+    raw_overlay_tokens = pdf_service.extract_page_overlay_tokens(paper_id, page)
+    page_size = pdf_service.get_page_size(paper_id, page)
+
+    zh_map: dict = {}
+    if translate:
+        blocks_to_translate = [b for b in raw_blocks if b["en"].strip()]
+        if blocks_to_translate:
+            try:
+                zh_list = llm_client.translate_batch([b["en"] for b in blocks_to_translate])
+                for b, zh in zip(blocks_to_translate, zh_list):
+                    zh_map[b["block_id"]] = zh
+            except Exception as e:
+                for b in blocks_to_translate:
+                    zh_map[b["block_id"]] = f"[翻译失败: {e}]"
 
     blocks: List[Block] = []
     for b in raw_blocks:
-        zh = ""
-        if translate and b["en"].strip():
-            try:
-                zh = llm_client.translate_to_zh(b["en"])
-            except Exception as e:
-                zh = f"[翻译失败: {e}]"
         blocks.append(Block(
             block_id=b["block_id"],
             type=b["type"],
             reading_order=b["reading_order"],
             en=b["en"],
-            zh=zh,
+            zh=zh_map.get(b["block_id"], ""),
+            x=b.get("x", 0.0),
+            y=b.get("y", 0.0),
+            width=b.get("width", 0.0),
+            height=b.get("height", 0.0),
+        ))
+
+    overlay_tokens: List[OverlayToken] = []
+    for token in raw_overlay_tokens:
+        overlay_tokens.append(OverlayToken(
+            token_id=token["token_id"],
+            text=token["text"],
+            x=token.get("x", 0.0),
+            y=token.get("y", 0.0),
+            width=token.get("width", 0.0),
+            height=token.get("height", 0.0),
         ))
 
     marks = mark_store.get_marks(paper_id, page)
@@ -119,7 +161,10 @@ def get_page(
         paper_id=paper_id,
         page_number=page,
         page_count=page_count,
+        page_width=page_size["width"],
+        page_height=page_size["height"],
         blocks=blocks,
+        overlay_tokens=overlay_tokens,
         marks=marks,
     )
 
@@ -201,6 +246,14 @@ def get_marks(
     return mark_store.get_marks(paper_id, page)
 
 
+# ── DELETE /api/marks/{mark_id} ────────────────────────────────────────────────
+@app.delete("/api/marks/{mark_id}", status_code=204)
+def delete_mark(mark_id: str):
+    found = mark_store.delete_mark(mark_id)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Mark {mark_id} not found.")
+
+
 # ── POST /api/notes/generate ───────────────────────────────────────────────────
 @app.post("/api/notes/generate", response_model=GenerateNoteResponse)
 def generate_note(req: GenerateNoteRequest):
@@ -210,6 +263,19 @@ def generate_note(req: GenerateNoteRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return GenerateNoteResponse(note_type=req.note_type, note_markdown=md)
+
+
+@app.post("/api/translate/snippets", response_model=TranslateSnippetsResponse)
+def translate_snippets(req: TranslateSnippetsRequest):
+    texts = [text.strip() for text in req.texts if text and text.strip()]
+    if not texts:
+        return TranslateSnippetsResponse(translations=[])
+
+    try:
+        translations = llm_client.translate_batch(texts)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return TranslateSnippetsResponse(translations=translations)
 
 
 # ── Health check ───────────────────────────────────────────────────────────────

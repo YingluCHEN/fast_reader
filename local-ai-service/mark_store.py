@@ -51,6 +51,16 @@ def get_marks_by_note_type(note_type: str) -> List[Mark]:
     return [Mark(**m) for m in result]
 
 
+def delete_mark(mark_id: str) -> bool:
+    with _lock:
+        marks = _load()
+        new_marks = [m for m in marks if m.get("mark_id") != mark_id]
+        if len(new_marks) == len(marks):
+            return False
+        _save(new_marks)
+    return True
+
+
 def next_mark_id(paper_id: str) -> str:
     with _lock:
         marks = _load()

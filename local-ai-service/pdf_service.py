@@ -82,6 +82,9 @@ def extract_page_blocks(paper_id: str, page_number: int) -> List[dict]:
         return []
 
     page = doc[page_idx]
+    page_rect = page.rect
+    page_width = float(page_rect.width) or 1.0
+    page_height = float(page_rect.height) or 1.0
     raw_blocks = page.get_text("blocks")  # (x0,y0,x1,y1,text,block_no,block_type)
 
     blocks = []
@@ -101,6 +104,85 @@ def extract_page_blocks(paper_id: str, page_number: int) -> List[dict]:
             "reading_order": reading_order,
             "en": text,
             "zh": "",
+            "x": max(0.0, min(1.0, float(b[0]) / page_width)),
+            "y": max(0.0, min(1.0, float(b[1]) / page_height)),
+            "width": max(0.0, min(1.0, float(b[2] - b[0]) / page_width)),
+            "height": max(0.0, min(1.0, float(b[3] - b[1]) / page_height)),
         })
 
     return blocks
+
+
+def extract_page_overlay_tokens(paper_id: str, page_number: int) -> List[dict]:
+    """Extract word-level text boxes for precise left-panel overlay/marking."""
+    if paper_id not in _registry:
+        raise KeyError(f"Unknown paper_id: {paper_id}")
+
+    doc: fitz.Document = _registry[paper_id]["doc"]
+    page_idx = page_number - 1
+    if page_idx < 0 or page_idx >= doc.page_count:
+        return []
+
+    page = doc[page_idx]
+    page_rect = page.rect
+    page_width = float(page_rect.width) or 1.0
+    page_height = float(page_rect.height) or 1.0
+    raw_words = page.get_text("words")
+    tokens = []
+    for i, word in enumerate(raw_words):
+        if len(word) < 5:
+            continue
+        x0, y0, x1, y1, text = float(word[0]), float(word[1]), float(word[2]), float(word[3]), str(word[4]).strip()
+        if not text:
+            continue
+
+        token_height = max(1.0, y1 - y0)
+        shrink_top = token_height * 0.12
+        shrink_bottom = token_height * 0.08
+        y0 += shrink_top
+        y1 -= shrink_bottom
+        if y1 <= y0:
+            y0 -= shrink_top
+            y1 += shrink_bottom
+
+        tokens.append({
+            "token_id": f"p{page_number}_w{i:04d}",
+            "text": text,
+            "x": max(0.0, min(1.0, x0 / page_width)),
+            "y": max(0.0, min(1.0, y0 / page_height)),
+            "width": max(0.0, min(1.0, (x1 - x0) / page_width)),
+            "height": max(0.0, min(1.0, (y1 - y0) / page_height)),
+        })
+
+    return tokens
+
+
+def get_page_size(paper_id: str, page_number: int) -> dict:
+    if paper_id not in _registry:
+        raise KeyError(f"Unknown paper_id: {paper_id}")
+
+    doc: fitz.Document = _registry[paper_id]["doc"]
+    page_idx = page_number - 1
+    if page_idx < 0 or page_idx >= doc.page_count:
+        raise KeyError(f"Page out of range: {page_number}")
+
+    rect = doc[page_idx].rect
+    return {
+      "width": float(rect.width),
+      "height": float(rect.height),
+    }
+
+
+def render_page_png(paper_id: str, page_number: int, scale: float = 2.0) -> bytes:
+    if paper_id not in _registry:
+        raise KeyError(f"Unknown paper_id: {paper_id}")
+
+    doc: fitz.Document = _registry[paper_id]["doc"]
+    page_idx = page_number - 1
+    if page_idx < 0 or page_idx >= doc.page_count:
+        raise KeyError(f"Page out of range: {page_number}")
+
+    page = doc[page_idx]
+    matrix = fitz.Matrix(scale, scale)
+    pix = page.get_pixmap(matrix=matrix, alpha=False)
+    return pix.tobytes("png")

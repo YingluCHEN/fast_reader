@@ -1,6 +1,6 @@
 export const Settings = {
   API_BASE: "http://127.0.0.1:8765",
-  PLUGIN_ID: "ai-bilingual-reader@zotero",
+  PLUGIN_ID: "ai-bilingual-reader@fast-reader.example",
 
   get(key: string, defaultValue: string = ""): string {
     try {

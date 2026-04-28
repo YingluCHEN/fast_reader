@@ -7,47 +7,47 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- ── Top bar ─────────────────────────────────────────── -->
   <div id="topbar">
     <div id="topbar-title" title=""></div>
     <div id="topbar-controls">
-      <button id="btn-prev">◀ Prev</button>
+      <button id="btn-prev">Prev</button>
       <span id="page-indicator">Page 1 / ?</span>
-      <button id="btn-next">Next ▶</button>
-      <select id="note-type-select">
-        <option value="">Select note type…</option>
-        <option value="Writing Note - Introduction">Introduction</option>
-        <option value="Writing Note - Research Gap">Research Gap</option>
-        <option value="Writing Note - Methods">Methods</option>
-        <option value="Writing Note - Validation">Validation</option>
-        <option value="Writing Note - Results">Results</option>
-        <option value="Writing Note - Discussion">Discussion</option>
-        <option value="Writing Note - Limitations">Limitations</option>
-        <option value="Writing Note - Useful Expressions">Useful Expressions</option>
-      </select>
+      <button id="btn-next">Next</button>
+      <div id="note-type-picker">
+        <button id="note-type-trigger" type="button">Select note type...</button>
+        <div id="note-type-menu" class="hidden">
+          <button type="button" data-note-type="Writing Note - Introduction">Introduction</button>
+          <button type="button" data-note-type="Writing Note - Research Gap">Research Gap</button>
+          <button type="button" data-note-type="Writing Note - Methods">Methods</button>
+          <button type="button" data-note-type="Writing Note - Validation">Validation</button>
+          <button type="button" data-note-type="Writing Note - Results">Results</button>
+          <button type="button" data-note-type="Writing Note - Discussion">Discussion</button>
+          <button type="button" data-note-type="Writing Note - Limitations">Limitations</button>
+          <button type="button" data-note-type="Writing Note - Useful Expressions">Useful Expressions</button>
+        </div>
+      </div>
       <button id="btn-generate-note">Generate Writing Note</button>
       <button id="btn-save-zotero">Save to Zotero Note</button>
     </div>
   </div>
 
-  <!-- ── Main split ─────────────────────────────────────── -->
   <div id="main-split">
-    <!-- Left: PDF viewer -->
     <div id="left-panel">
+      <div id="pdf-error" class="hidden"></div>
       <div id="pdf-container">
-        <canvas id="pdf-canvas"></canvas>
+        <img id="pdf-page-image" alt="PDF page" />
+        <div id="pdf-fallback-text" class="hidden"></div>
         <div id="text-layer"></div>
+        <div id="drag-selection-box" class="hidden"></div>
         <canvas id="highlight-canvas"></canvas>
       </div>
     </div>
 
-    <!-- Resizer -->
     <div id="resizer"></div>
 
-    <!-- Right: AI translation panel -->
     <div id="right-panel">
       <div id="right-header">
-        <span>AI Translation — Current Page</span>
+        <span>AI Translation - Current Page</span>
         <span id="right-status"></span>
       </div>
       <div id="blocks-container"></div>
@@ -58,7 +58,6 @@
     </div>
   </div>
 
-  <!-- ── Floating mark toolbar ──────────────────────────── -->
   <div id="mark-toolbar" class="hidden">
     <div id="mark-toolbar-inner">
       <span class="toolbar-label">Mark as:</span>
@@ -71,20 +70,19 @@
       <button data-type="Limitation">Limitation</button>
       <button data-type="Discussion">Discussion</button>
       <button data-type="Good Sentence">Good Sentence</button>
-      <button id="toolbar-cancel">✕</button>
+      <button id="toolbar-cancel">X</button>
     </div>
     <div id="toolbar-comment-row">
-      <input id="toolbar-comment" type="text" placeholder="Optional comment…" />
+      <input id="toolbar-comment" type="text" placeholder="Optional comment..." />
       <button id="toolbar-save">Save Mark</button>
     </div>
   </div>
 
-  <!-- ── Note preview modal ─────────────────────────────── -->
   <div id="note-modal" class="hidden">
     <div id="note-modal-inner">
       <div id="note-modal-header">
         <span id="note-modal-title">Writing Note</span>
-        <button id="note-modal-close">✕</button>
+        <button id="note-modal-close">X</button>
       </div>
       <pre id="note-modal-content"></pre>
       <div id="note-modal-footer">
@@ -93,17 +91,10 @@
     </div>
   </div>
 
-  <!-- ── Loading overlay ────────────────────────────────── -->
   <div id="loading-overlay" class="hidden">
     <div id="loading-spinner"></div>
-    <div id="loading-text">Loading…</div>
+    <div id="loading-text">Loading...</div>
   </div>
-
-  <!-- PDF.js from CDN (bundled copy goes in pdfjs/) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
-          integrity="sha512-q+4lFAkB1jqcxjBjLHo/K5mPqFiDOh0eIRcOpOtiMF2AqrFV5VHLPkO/oqRr8L9g1W4cCQqN0s4c4M4J7K0A=="
-          crossorigin="anonymous"
-          referrerpolicy="no-referrer"></script>
   <script src="reader.js"></script>
 </body>
 </html>

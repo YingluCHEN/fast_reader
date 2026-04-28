@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime
 
 from mark_store import get_marks_by_note_type
 from llm_client import generate_note_markdown
@@ -15,8 +16,23 @@ def _safe_filename(note_type: str) -> str:
 
 
 def generate_and_save(note_type: str) -> str:
-    """Generate Markdown for note_type from stored marks, save to disk, return Markdown."""
+    """Return cached Markdown if marks haven't changed, otherwise regenerate."""
     marks = get_marks_by_note_type(note_type)
+
+    os.makedirs(_NOTES_DIR, exist_ok=True)
+    fpath = os.path.join(_NOTES_DIR, _safe_filename(note_type))
+
+    # Return cache if the file exists and no mark is newer than the file
+    if marks and os.path.exists(fpath):
+        file_mtime = os.path.getmtime(fpath)
+        latest_mark_ts = max(
+            (datetime.fromisoformat(m.created_at).timestamp()
+             for m in marks if m.created_at),
+            default=0,
+        )
+        if latest_mark_ts <= file_mtime:
+            with open(fpath, "r", encoding="utf-8") as f:
+                return f.read()
 
     if not marks:
         md = f"# {note_type}\n\n_No marks have been saved for this note type yet._\n"
@@ -41,10 +57,6 @@ def generate_and_save(note_type: str) -> str:
         marks_json = json.dumps(marks_payload, ensure_ascii=False, indent=2)
         md = generate_note_markdown(note_type, marks_json)
 
-    # Persist to disk
-    os.makedirs(_NOTES_DIR, exist_ok=True)
-    fname = _safe_filename(note_type)
-    fpath = os.path.join(_NOTES_DIR, fname)
     with open(fpath, "w", encoding="utf-8") as f:
         f.write(md)
 

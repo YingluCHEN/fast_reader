@@ -1,9 +1,11 @@
 """OpenAI-compatible LLM client for translation and classification."""
 from __future__ import annotations
+
 import json
 import os
 import re
 from typing import Tuple
+
 from openai import OpenAI
 
 _client: OpenAI | None = None
@@ -23,33 +25,26 @@ def _model() -> str:
     return os.environ.get("LLM_MODEL", "gpt-4o-mini")
 
 
-# ── Formula extraction ────────────────────────────────────────────────────────
 # Order matters: longer/more-specific patterns first.
 _FORMULA_PATTERNS = [
-    # Display math: $$...$$
     r"\$\$[\s\S]+?\$\$",
-    # Display math: \[...\]
     r"\\\[[\s\S]+?\\\]",
-    # Display math: \begin{...}...\end{...}
     r"\\begin\{[^}]+\}[\s\S]+?\\end\{[^}]+\}",
-    # Inline math: $...$  (non-greedy, no newline inside)
     r"\$[^$\n]+?\$",
-    # Inline math: \(...\)
     r"\\\([\s\S]+?\\\)",
-    # Standalone variable-like tokens: e.g. α, β, R², Δx, σ²
-    r"(?<!\w)[A-Za-zα-ωΑ-Ω][₀-₉⁰-⁹_^{}\d]*(?:[_^][{]?[A-Za-z\d]+[}]?)+(?!\w)",
+    r"(?<!\w)[A-Za-z][A-Za-z\d^_{}]*(?:[_^][{]?[A-Za-z\d]+[}]?)+(?!\w)",
 ]
 _FORMULA_RE = re.compile("|".join(_FORMULA_PATTERNS))
-_PLACEHOLDER = "⟨EQ{i}⟩"
+_PLACEHOLDER = "[[FORMULA_{i}]]"
 
 
 def _extract_formulas(text: str) -> Tuple[str, list]:
     """Replace all formulas with placeholders. Returns (masked_text, formulas)."""
     formulas: list = []
 
-    def replacer(m: re.Match) -> str:
+    def replacer(match: re.Match) -> str:
         idx = len(formulas)
-        formulas.append(m.group(0))
+        formulas.append(match.group(0))
         return _PLACEHOLDER.format(i=idx)
 
     masked = _FORMULA_RE.sub(replacer, text)
@@ -58,38 +53,88 @@ def _extract_formulas(text: str) -> Tuple[str, list]:
 
 def _restore_formulas(text: str, formulas: list) -> str:
     """Put the original formula strings back."""
-    for i, f in enumerate(formulas):
-        text = text.replace(_PLACEHOLDER.format(i=i), f)
+    for i, formula in enumerate(formulas):
+        text = text.replace(_PLACEHOLDER.format(i=i), formula)
     return text
 
 
 def translate_to_zh(text: str) -> str:
-    """Translate English academic text to concise Chinese, preserving all formulas."""
+    """Translate a single English academic text to Chinese."""
     masked, formulas = _extract_formulas(text)
-
     prompt = (
         "You are an academic paper reading assistant.\n\n"
-        "Translate the following English academic text into concise Chinese for rapid reading.\n\n"
+        "Translate the following English academic text into compact but information-complete Chinese for rapid reading.\n\n"
         "Requirements:\n"
-        "1. Prioritize the main idea over polished wording.\n"
-        "2. IMPORTANT: tokens in the form ⟨EQ0⟩, ⟨EQ1⟩, … are formula placeholders. "
-        "Copy them verbatim into the translation at the same position. Do NOT translate, "
-        "rephrase, or remove them.\n"
-        "3. Preserve citations (e.g. [1], Smith et al.), figure/table numbers, and units.\n"
-        "4. Do not add explanations.\n"
-        "5. Do not omit key claims.\n"
-        "6. Use concise academic Chinese.\n"
-        "7. Return only the Chinese translation.\n\n"
+        "1. Prioritize the main idea, but do NOT omit key information.\n"
+        "2. Keep important details such as methods, assumptions, conditions, comparisons, numerical values, citations, figure/table numbers, equations, symbols, units, and conclusions.\n"
+        "3. IMPORTANT: formula-placeholder tokens such as [[FORMULA_0]] must be copied verbatim.\n"
+        "4. Use compact academic Chinese suitable for fast reading, but avoid over-summarizing.\n"
+        "5. Return only the translation.\n\n"
         f"Text:\n{masked}"
     )
     resp = _get_client().chat.completions.create(
         model=_model(),
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=1000,
-        temperature=0.2,
+        max_tokens=1400,
+        temperature=0.1,
     )
-    translated_masked = resp.choices[0].message.content.strip()
-    return _restore_formulas(translated_masked, formulas)
+    return _restore_formulas(resp.choices[0].message.content.strip(), formulas)
+
+
+def translate_batch(texts: list) -> list:
+    """Translate multiple English academic texts in one API call.
+    Falls back to individual translations if the batch fails or returns incomplete results.
+    """
+    if not texts:
+        return []
+
+    masked_list, formulas_list = [], []
+    for text in texts:
+        masked, formulas = _extract_formulas(text)
+        masked_list.append(masked)
+        formulas_list.append(formulas)
+
+    numbered = "\n\n".join(f"[{i + 1}]\n{t}" for i, t in enumerate(masked_list))
+    prompt = (
+        "You are an academic paper reading assistant.\n\n"
+        "Translate each numbered English academic text block into compact but information-complete Chinese for rapid reading.\n\n"
+        "Requirements:\n"
+        "1. Prioritize the main idea, but do NOT omit key information.\n"
+        "2. Keep important details such as methods, assumptions, conditions, comparisons, numerical values, citations, figure/table numbers, equations, symbols, units, and conclusions.\n"
+        "3. IMPORTANT: formula-placeholder tokens such as [[FORMULA_0]] must be copied verbatim.\n"
+        "4. Use compact academic Chinese suitable for fast reading, but avoid over-summarizing. Do not add explanations.\n"
+        f'5. Return ONLY a JSON object: {{"translations": ["zh1", "zh2", ...]}}\n'
+        f"   with exactly {len(texts)} items in the same order.\n\n"
+        f"Blocks:\n{numbered}"
+    )
+    zh_list = []
+    try:
+        resp = _get_client().chat.completions.create(
+            model=_model(),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=8000,
+            temperature=0.1,
+        )
+        raw = resp.choices[0].message.content.strip()
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", raw)
+            data = json.loads(match.group(1)) if match else {}
+        zh_list = data.get("translations", [])
+    except Exception:
+        pass
+
+    results = []
+    for i in range(len(texts)):
+        zh = zh_list[i] if i < len(zh_list) and zh_list[i] else ""
+        if not zh:
+            try:
+                zh = translate_to_zh(texts[i])
+            except Exception:
+                zh = ""
+        results.append(_restore_formulas(zh, formulas_list[i]))
+    return results
 
 
 def classify_mark(
@@ -124,12 +169,13 @@ def classify_mark(
         "7. Writing Note - Limitations\n"
         "8. Writing Note - Useful Expressions\n\n"
         "Choose one target note and one sub_category.\n\n"
+        "IMPORTANT: ai_summary and possible_use_in_my_paper MUST be written in Chinese.\n\n"
         "Return JSON only:\n"
         '{\n'
         '  "target_note": "...",\n'
         '  "sub_category": "...",\n'
-        '  "ai_summary": "...",\n'
-        '  "possible_use_in_my_paper": "...",\n'
+        '  "ai_summary": "中文摘要",\n'
+        '  "possible_use_in_my_paper": "中文用途说明",\n'
         '  "keywords": ["...", "..."],\n'
         '  "confidence": 0.0\n'
         '}'
@@ -145,10 +191,9 @@ def classify_mark(
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        # Extract JSON from markdown code block if present
-        m = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", raw)
-        if m:
-            return json.loads(m.group(1))
+        match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", raw)
+        if match:
+            return json.loads(match.group(1))
         return {
             "target_note": f"Writing Note - {mark_type}",
             "sub_category": mark_type,
@@ -171,7 +216,7 @@ def generate_note_markdown(note_type: str, marks_json: str) -> str:
         "2. Keep the selected English original.\n"
         "3. Keep the Chinese understanding.\n"
         "4. Keep source information: paper title, DOI if available, page number.\n"
-        "5. Add \"Possible use in my paper\" for each entry.\n"
+        '5. Add "Possible use in my paper" for each entry.\n'
         "6. Do not invent claims outside the marked passages.\n"
         "7. Do not remove source passages.\n"
         "8. Use concise academic Chinese.\n\n"

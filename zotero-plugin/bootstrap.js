@@ -1,166 +1,227 @@
 "use strict";
 
-/* global Components, Services, ChromeUtils */
+var { classes: Cc, interfaces: Ci } = Components;
 
-var { classes: Cc, interfaces: Ci, utils: Cu } = Components;
+const CONTENT_PACKAGE = "ai-bilingual-reader";
+const ITEM_MENU_ID = "zotero-itemmenu";
+const ITEM_COMMAND_ID = "ai-bilingual-read-menuitem";
+const ITEM_SEPARATOR_ID = "ai-bilingual-read-sep";
+const TOOLS_POPUP_IDS = ["menu_ToolsPopup", "toolsMenuPopup"];
+const TOOLS_COMMAND_ID = "ai-bilingual-read-tools-menuitem";
 
-Cu.import("resource://gre/modules/Services.jsm");
+let chromeHandle = null;
 
-// ─── Plugin state ────────────────────────────────────────────────────────────
+function registerChrome(rootURI) {
+  const manifestURI = Services.io.newURI(rootURI + "manifest.json");
+  chromeHandle = Cc["@mozilla.org/addons/addon-manager-startup;1"]
+    .getService(Ci.amIAddonManagerStartup)
+    .registerChrome(manifestURI, [
+      ["content", CONTENT_PACKAGE, "chrome/content/"],
+    ]);
+}
+
 var AIBilingualReader = {
-  id: "ai-bilingual-reader@zotero",
-  _menuItem: null,
-  _windows: new Map(), // itemID → reader window
+  _rootURI: "",
+  _windowListener: null,
+  _readerWindows: new Map(),
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────
-  init({ id, version, rootURI }) {
-    this.rootURI = rootURI;
+  init({ rootURI }) {
+    this._rootURI = rootURI;
     this._addToAllWindows();
+
+    this._windowListener = {
+      onOpenWindow: xulWindow => {
+        const win = xulWindow
+          .QueryInterface(Ci.nsIInterfaceRequestor)
+          .getInterface(Ci.nsIDOMWindow);
+        win.addEventListener("load", () => this._addToWindow(win), { once: true });
+      },
+      onCloseWindow: () => {},
+      onWindowTitleChange: () => {},
+    };
+
     Services.wm.addListener(this._windowListener);
   },
 
   shutdown() {
-    Services.wm.removeListener(this._windowListener);
-    this._removeFromAllWindows();
-    this._windows.forEach(w => { try { w.close(); } catch (e) {} });
-    this._windows.clear();
+    if (this._windowListener) {
+      Services.wm.removeListener(this._windowListener);
+      this._windowListener = null;
+    }
+
+    this._forEachMainWindow(win => this._removeFromWindow(win));
+
+    this._readerWindows.forEach(win => {
+      try {
+        win.close();
+      } catch (_error) {}
+    });
+    this._readerWindows.clear();
   },
 
-  // ── Window management ─────────────────────────────────────────────────────
+  _forEachMainWindow(callback) {
+    if (typeof Zotero !== "undefined" && typeof Zotero.getMainWindows === "function") {
+      for (const win of Zotero.getMainWindows()) {
+        callback(win);
+      }
+      return;
+    }
+
+    const enumerator = Services.wm.getEnumerator("navigator:browser");
+    while (enumerator.hasMoreElements()) {
+      callback(enumerator.getNext());
+    }
+  },
+
   _addToAllWindows() {
-    const wins = Services.wm.getEnumerator("navigator:browser");
-    while (wins.hasMoreElements()) {
-      const win = wins.getNext();
-      if (!win.AIBilingualReader) this._addToWindow(win);
-    }
-    // Zotero main window type
-    const zwins = Services.wm.getEnumerator("zotero:basicViewer");
-    while (zwins.hasMoreElements()) {
-      const win = zwins.getNext();
-      if (!win.AIBilingualReader) this._addToWindow(win);
-    }
-  },
-
-  _removeFromAllWindows() {
-    const wins = Services.wm.getEnumerator("navigator:browser");
-    while (wins.hasMoreElements()) {
-      this._removeFromWindow(wins.getNext());
-    }
+    this._forEachMainWindow(win => this._addToWindow(win));
   },
 
   _addToWindow(win) {
-    if (!win.document) return;
-    win.AIBilingualReader = this;
-    this._injectMenu(win);
+    if (!win || !win.document) {
+      return;
+    }
+
+    this._ensureItemContextMenu(win.document);
+    this._ensureToolsMenu(win.document);
   },
 
   _removeFromWindow(win) {
-    this._removeMenu(win);
-    delete win.AIBilingualReader;
+    if (!win || !win.document) {
+      return;
+    }
+
+    [
+      ITEM_SEPARATOR_ID,
+      ITEM_COMMAND_ID,
+      TOOLS_COMMAND_ID,
+    ].forEach(id => {
+      win.document.getElementById(id)?.remove();
+    });
   },
 
-  _windowListener: {
-    onOpenWindow(xulWindow) {
-      const win = xulWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-        .getInterface(Ci.nsIDOMWindow);
-      win.addEventListener("load", function onLoad() {
-        win.removeEventListener("load", onLoad);
-        if (win.AIBilingualReader) return;
-        AIBilingualReader._addToWindow(win);
-      });
-    },
-    onCloseWindow() {},
-    onWindowTitleChange() {},
-  },
+  _ensureItemContextMenu(doc) {
+    const popup = doc.getElementById(ITEM_MENU_ID);
+    if (!popup || doc.getElementById(ITEM_COMMAND_ID)) {
+      return;
+    }
 
-  // ── Context menu injection ─────────────────────────────────────────────────
-  _injectMenu(win) {
-    const doc = win.document;
-    // Zotero item context menu id
-    const popup = doc.getElementById("zotero-itemmenu");
-    if (!popup) return;
+    const sep = this._createMenuNode(doc, "menuseparator");
+    sep.id = ITEM_SEPARATOR_ID;
 
-    if (doc.getElementById("ai-bilingual-read-menuitem")) return;
-
-    const sep = doc.createElementNS(
-      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-      "menuseparator"
-    );
-    sep.id = "ai-bilingual-read-sep";
-
-    const item = doc.createElementNS(
-      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-      "menuitem"
-    );
-    item.id = "ai-bilingual-read-menuitem";
+    const item = this._createMenuNode(doc, "menuitem");
+    item.id = ITEM_COMMAND_ID;
     item.setAttribute("label", "AI Bilingual Read");
-    item.setAttribute("oncommand", "AIBilingualReader.onMenuCommand(window);");
+    item.addEventListener("command", () => this.onMenuCommand(doc.defaultView));
 
     popup.appendChild(sep);
     popup.appendChild(item);
   },
 
-  _removeMenu(win) {
-    const doc = win.document;
-    ["ai-bilingual-read-sep", "ai-bilingual-read-menuitem"].forEach(id => {
-      const el = doc.getElementById(id);
-      if (el) el.remove();
-    });
+  _ensureToolsMenu(doc) {
+    if (doc.getElementById(TOOLS_COMMAND_ID)) {
+      return;
+    }
+
+    const popup = this._findToolsPopup(doc);
+    if (!popup) {
+      return;
+    }
+
+    const item = this._createMenuNode(doc, "menuitem");
+    item.id = TOOLS_COMMAND_ID;
+    item.setAttribute("label", "AI Bilingual Read");
+    item.addEventListener("command", () => this.onMenuCommand(doc.defaultView));
+    popup.appendChild(item);
   },
 
-  // ── Menu handler ──────────────────────────────────────────────────────────
+  _findToolsPopup(doc) {
+    for (const id of TOOLS_POPUP_IDS) {
+      const popup = doc.getElementById(id);
+      if (popup) {
+        return popup;
+      }
+    }
+
+    const toolsMenu = doc.getElementById("menu_Tools");
+    if (toolsMenu && toolsMenu.menupopup) {
+      return toolsMenu.menupopup;
+    }
+
+    return null;
+  },
+
+  _createMenuNode(doc, tagName) {
+    return doc.createXULElement
+      ? doc.createXULElement(tagName)
+      : doc.createElement(tagName);
+  },
+
   async onMenuCommand(win) {
     try {
-      const item = Zotero.getActiveZoteroPane().getSelectedItems()[0];
-      if (!item) {
-        Services.prompt.alert(win, "AI Bilingual Reader", "Please select a Zotero item.");
+      const pane = Zotero.getActiveZoteroPane();
+      if (!pane) {
+        this._alert(win, "Zotero pane not ready.");
         return;
       }
 
+      const items = pane.getSelectedItems();
+      if (!items || !items.length) {
+        this._alert(win, "Please select a Zotero item.");
+        return;
+      }
+
+      const item = items[0];
       const pdfPath = await this._getPDFPath(item);
       if (!pdfPath) {
-        Services.prompt.alert(win, "AI Bilingual Reader", "No PDF attachment found for this item.");
+        this._alert(win, "No PDF attachment found for this item.");
         return;
       }
 
-      const paperMeta = this._extractMeta(item);
-
-      // Register the paper with the backend
+      const meta = this._extractMeta(item, pdfPath);
       let paperInfo;
       try {
-        paperInfo = await this._startReading(paperMeta, pdfPath);
-      } catch (e) {
-        Services.prompt.alert(win, "AI Bilingual Reader",
-          `Cannot reach local AI service at http://127.0.0.1:8765.\n\nPlease start it with:\n  python app.py\n\nError: ${e.message}`);
+        paperInfo = await this._startReading(meta);
+      } catch (error) {
+        this._alert(
+          win,
+          "Cannot reach local AI service at http://127.0.0.1:8765\n\n" +
+          "Please start it:\n  cd local-ai-service && python app.py\n\n" +
+          `Error: ${error.message}`
+        );
         return;
       }
 
-      this._openReaderWindow(win, paperInfo, pdfPath, item.id);
-    } catch (e) {
-      Cu.reportError(e);
-      Services.prompt.alert(win, "AI Bilingual Reader", `Error: ${e.message}`);
+      this._openReaderWindow(win, paperInfo, item.id);
+    } catch (error) {
+      Zotero?.debug?.(`[AI Bilingual Reader] ${error}`);
+      this._alert(win, `Error: ${error.message}`);
     }
   },
 
   async _getPDFPath(item) {
-    const attachments = item.getAttachments();
-    for (const attId of attachments) {
-      const att = Zotero.Items.get(attId);
-      if (att && att.attachmentContentType === "application/pdf") {
-        const path = att.getFilePath();
-        if (path) return path;
+    const attachmentIds = item.getAttachments();
+    for (const attachmentId of attachmentIds) {
+      const attachment = Zotero.Items.get(attachmentId);
+      if (attachment && attachment.attachmentContentType === "application/pdf") {
+        const filePath = attachment.getFilePath();
+        if (filePath) {
+          return filePath;
+        }
       }
     }
     return null;
   },
 
-  _extractMeta(item) {
-    const creators = (item.getCreators() || []).map(c => ({
-      firstName: c.firstName || "",
-      lastName: c.lastName || "",
+  _extractMeta(item, pdfPath) {
+    const creators = (item.getCreators() || []).map(creator => ({
+      firstName: creator.firstName || "",
+      lastName: creator.lastName || "",
     }));
+
     return {
       zotero_item_id: item.id,
+      pdf_path: pdfPath,
       title: item.getField("title") || "",
       doi: item.getField("DOI") || "",
       year: item.getField("year") || "",
@@ -168,26 +229,28 @@ var AIBilingualReader = {
     };
   },
 
-  async _startReading(meta, pdfPath) {
-    const body = { ...meta, pdf_path: pdfPath };
-    const resp = await fetch("http://127.0.0.1:8765/api/read/start", {
+  async _startReading(meta) {
+    const response = await fetch("http://127.0.0.1:8765/api/read/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(meta),
     });
-    if (!resp.ok) throw new Error(`Backend error: ${resp.status}`);
-    return resp.json();
+
+    if (!response.ok) {
+      throw new Error(`Backend error: ${response.status}`);
+    }
+
+    return response.json();
   },
 
-  _openReaderWindow(parentWin, paperInfo, pdfPath, zoteroItemId) {
-    // If a reader for this item is already open, focus it
-    if (this._windows.has(zoteroItemId)) {
-      const existing = this._windows.get(zoteroItemId);
+  _openReaderWindow(parentWin, paperInfo, zoteroItemId) {
+    if (this._readerWindows.has(zoteroItemId)) {
+      const existing = this._readerWindows.get(zoteroItemId);
       try {
         existing.focus();
         return;
-      } catch (e) {
-        this._windows.delete(zoteroItemId);
+      } catch (_error) {
+        this._readerWindows.delete(zoteroItemId);
       }
     }
 
@@ -199,31 +262,90 @@ var AIBilingualReader = {
       zotero_item_id: String(zoteroItemId),
     });
 
-    const url = `chrome://ai-bilingual-reader/content/reader/index.html?${params.toString()}`;
-
+    const readerURL = `chrome://${CONTENT_PACKAGE}/content/reader/index.html?${params.toString()}`;
     const readerWin = parentWin.open(
-      url,
-      `ai-bilingual-reader-${zoteroItemId}`,
+      readerURL,
+      `ai-reader-${zoteroItemId}`,
       "chrome,dialog=no,resizable=yes,width=1400,height=900,scrollbars=yes"
     );
 
-    if (readerWin) {
-      readerWin._zoteroItemId = zoteroItemId;
-      this._windows.set(zoteroItemId, readerWin);
-      readerWin.addEventListener("unload", () => {
-        this._windows.delete(zoteroItemId);
-      });
+    if (!readerWin) {
+      this._alert(parentWin, "Failed to open the AI Bilingual Reader window.");
+      return;
+    }
+
+    this._readerWindows.set(zoteroItemId, readerWin);
+    readerWin.addEventListener("unload", () => this._readerWindows.delete(zoteroItemId));
+    readerWin._saveNoteToZotero = (itemId, noteType, markdown) =>
+      this._saveNoteToZotero(itemId, noteType, markdown);
+  },
+
+  async _saveNoteToZotero(zoteroItemId, noteType, markdown) {
+    const item = Zotero.Items.get(zoteroItemId);
+    if (!item) {
+      throw new Error(`Zotero item ${zoteroItemId} not found`);
+    }
+
+    const noteTitle = `[Writing] ${noteType.replace(/^Writing Note - /, "")}`;
+    const html = `<h2>${noteTitle}</h2>\n${this._mdToHtml(markdown)}`;
+
+    const childIds = item.getNotes();
+    let existing = null;
+    for (const noteId of childIds) {
+      const note = Zotero.Items.get(noteId);
+      if (note && note.isNote() && (note.getNote() || "").includes(noteTitle)) {
+        existing = note;
+        break;
+      }
+    }
+
+    if (existing) {
+      existing.setNote(html);
+      await existing.saveTx();
+      return;
+    }
+
+    const note = new Zotero.Item("note");
+    note.setNote(html);
+    note.parentID = item.id;
+    await note.saveTx();
+  },
+
+  _mdToHtml(md) {
+    return md
+      .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+      .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+      .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>")
+      .replace(/`(.+?)`/g, "<code>$1</code>")
+      .replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>")
+      .replace(/^- (.+)$/gm, "<li>$1</li>")
+      .replace(/\n\n+/g, "</p><p>")
+      .replace(/^(?!<)/gm, "<p>")
+      .replace(/<p>$/gm, "");
+  },
+
+  _alert(win, msg) {
+    try {
+      Services.prompt.alert(win, "AI Bilingual Reader", msg);
+    } catch (_error) {
+      win?.alert(msg);
     }
   },
 };
 
-// ─── Bootstrap entry points ───────────────────────────────────────────────────
-function startup({ id, version, rootURI }) {
-  AIBilingualReader.init({ id, version, rootURI });
+function startup({ rootURI }) {
+  registerChrome(rootURI);
+  AIBilingualReader.init({ rootURI });
 }
 
 function shutdown() {
   AIBilingualReader.shutdown();
+  if (chromeHandle) {
+    chromeHandle.destruct();
+    chromeHandle = null;
+  }
 }
 
 function install() {}

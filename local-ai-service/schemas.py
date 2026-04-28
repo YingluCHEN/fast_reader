@@ -32,6 +32,19 @@ class Block(BaseModel):
     reading_order: int
     en: str
     zh: str = ""
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
+
+
+class OverlayToken(BaseModel):
+    token_id: str
+    text: str
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
 
 
 class NormalizedRect(BaseModel):
@@ -70,7 +83,10 @@ class PageResponse(BaseModel):
     paper_id: str
     page_number: int
     page_count: int
+    page_width: float = 0.0
+    page_height: float = 0.0
     blocks: List[Block]
+    overlay_tokens: List[OverlayToken] = []
     marks: List[Mark]
 
 
@@ -91,3 +107,11 @@ class GenerateNoteRequest(BaseModel):
 class GenerateNoteResponse(BaseModel):
     note_type: str
     note_markdown: str
+
+
+class TranslateSnippetsRequest(BaseModel):
+    texts: List[str]
+
+
+class TranslateSnippetsResponse(BaseModel):
+    translations: List[str]
