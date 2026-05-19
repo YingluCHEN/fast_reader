@@ -7,9 +7,13 @@ Zotero 7+ 插件，支持 AI 双语阅读、划词 mark、Writing Note 生成。
 Quick Start
 # 1. 启动本地 AI 服务
 cd local-ai-service
+
 python -m venv .venv && .venv/Scripts/activate  
+
 pip install -r requirements.txt
+
 cp .env.example .env   # 填入 LLM_API_KEY
+
 python app.py          
 
 # 2. 打包并安装插件
